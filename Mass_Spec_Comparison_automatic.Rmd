@@ -1,0 +1,272 @@
+---
+title: "Automatic mass spectra comparison"
+author: "Martha Zuluaga"
+date: "22/6/2021"
+output:
+---
+
+
+```{r,include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Libraries
+```{r,include=FALSE}
+library(reticulate)
+library(data.table)
+library(tidyverse)
+library(ggplot2)
+library(ggrepel)
+library(fs)
+library(knitr)
+```
+# Functions
+```{r,include=FALSE}
+## 1.1 function to read multiple csv files
+files_read<-function(data_file,sepa=FALSE){
+  file_paths<-fs::dir_ls(data_file)
+  # list of mass spectra theorical
+  theo_list<-list() 
+  if (sepa==';'){
+    sepa<-';'
+  }else{ 
+    sepa<-','
+  }
+  # for loop to read .csv
+  for (i in seq_along(file_paths)){
+    theo_list[[i]]<-read.csv(
+      file=file_paths[[i]],sep=sepa
+    )
+  }
+  return(theo_list)
+}
+```
+```{r,include=FALSE}
+##1.2 function for comparison
+spectra_comparison<-function(experimental,data_theoretical,mult=TRUE){
+  # 0. Call the data
+  data          <- experimental
+  # 1. Data tidy
+  ## 1.1. Experimental data tidy
+  if (mult==FALSE){
+    data.1 <- data.frame(mass = data[!(is.na(data[,1])),1], intensity = data[!(is.na(data[,1])),2]) %>%
+      arrange(desc(intensity)) 
+    data.1$rel_intensity <- data.1$intensity/data.1$intensity[1]*100
+    data.1$energy        <- "15.ev"
+    data.exp <- data.1
+  }else{
+    data.1 <- data.frame(mass = data[!(is.na(data[,1])),1], intensity = data[!(is.na(data[,1])),2]) %>%
+      arrange(desc(intensity)) 
+    data.1$rel_intensity <- data.1$intensity/data.1$intensity[1]*100
+    data.1$energy        <- "15.ev"
+    
+    data.2 <- data.frame(mass = data[!(is.na(data[,3])),3], intensity = data[!(is.na(data[,3])),4]) %>%
+      arrange(desc(intensity)) 
+    data.2$rel_intensity <- data.2$intensity/data.2$intensity[1]*100  
+    data.2$energy        <- "35.ev"
+    
+    data.3 <- data.frame(mass = data[!(is.na(data[,5])),5], intensity = data[!(is.na(data[,5])),6]) %>%
+      arrange(desc(intensity)) 
+    data.3$rel_intensity <- data.3$intensity/data.3$intensity[1]*100  
+    data.3$energy        <- "55.ev"
+    
+    data.exp <- rbind(data.1,data.2, data.3)
+  }
+  ## 1.2. Theoretical spec data tidy
+  if (mult==FALSE){
+    data.1 <- data.frame(mass = data_theoretical[!(is.na(data_theoretical[,1])),1], intensity = data_theoretical[!(is.na(data_theoretical[,1])),2]) %>%
+      arrange(desc(intensity)) 
+    data.1$rel_intensity <- data.1$intensity/data.1$intensity[1]*100
+    data.1$energy        <- "10.ev"
+    
+    data.theo      <- data.1
+    data.theo$type <- "Theoretical"
+  }else{
+    data.1 <- data.frame(mass = data_theoretical[!(is.na(data_theoretical[,1])),1], intensity = data_theoretical[!(is.na(data_theoretical[,1])),2]) %>%
+      arrange(desc(intensity)) 
+    data.1$rel_intensity <- data.1$intensity/data.1$intensity[1]*100
+    data.1$energy        <- "10.ev"
+    
+    data.2 <- data.frame(mass = data_theoretical[!(is.na(data_theoretical[,3])),3], intensity = data_theoretical[!(is.na(data_theoretical[,3])),4]) %>%
+      arrange(desc(intensity)) 
+    data.2$rel_intensity <- data.2$intensity/data.2$intensity[1]*100  
+    data.2$energy        <- "20.ev"
+    
+    data.3 <- data.frame(mass = data_theoretical[!(is.na(data_theoretical[,5])),5], intensity = data_theoretical[!(is.na(data_theoretical[,5])),6]) %>%
+      arrange(desc(intensity)) 
+    data.3$rel_intensity <- data.3$intensity/data.3$intensity[1]*100  
+    data.3$energy        <- "40.ev"
+    
+    data.theo      <- rbind(data.1,data.2,data.3)
+    data.theo$type <- "Theoretical"
+  }
+  # 2. Data analysis. Matching theoretical and experimental data
+  mass      <- c()
+  intensity <- c()
+  rel_intensity <- c()
+  energy     <- c()
+  for (i in 1:length(data.theo$mass)){
+    aux <- data.exp[near(data.exp$mass,data.theo$mass[i], tol = 1),] %>% arrange(desc(rel_intensity))
+    mass      <- c(mass,aux[1,1])
+    intensity <- c(intensity,aux[1,2])
+    rel_intensity <- c(rel_intensity,aux[1,3])
+    energy        <- c(energy,aux[1,4])
+  }
+  
+  data.match <- data.frame(mass = mass, intensity = intensity, 
+                           rel_intensity = rel_intensity,
+                           energy = energy, type = "Experimental") # Datos emparejados con los teoricos 
+  total_data <- rbind(data.match,data.theo)
+  
+  # 3. matching matrix
+  comparative <- tibble(exp.mass = data.match$mass, theo.mass = data.theo$mass,
+                        rel_intensity.exp  = data.match$rel_intensity,
+                        rel_intensity.theo  = data.theo$rel_intensity)
+  
+  comparative_20 <- comparative %>% 
+    filter(rel_intensity.exp >=10) %>% 
+    arrange(desc(rel_intensity.theo))
+  
+  head(comparative_20, 21)
+  
+  # 4. mass error
+  comparative_20 <- comparative_20 %>% 
+    mutate(Diff_Da = theo.mass-exp.mass) %>% 
+    mutate(ppm = (theo.mass-exp.mass)*1000000/theo.mass)
+  head(comparative_20, 20)
+  salida<-list(comparative_20,data.theo,data.match
+  )
+  return(salida)
+}
+```
+```{r,include=FALSE}
+# Graphing function
+grafico<-function(data,data.match){
+  data.theo <- data %>% 
+    mutate(rel_intensity = -rel_intensity)
+  
+  total_data <- rbind(data.match, data.theo)
+  
+  ggplot(total_data, aes(x=mass, y=rel_intensity, color = type)) + 
+    geom_point(size = 2) +
+    geom_segment(aes(x=mass, 
+                     xend=mass, 
+                     y=0, 
+                     yend=rel_intensity)) +
+    geom_text_repel(data = total_data %>% 
+                      filter(abs(rel_intensity) > 15),
+                    mapping = aes(label = round(mass, 2)), size = 3, show.legend = F)
+}
+```
+# 1.Input data experimental and theoretical 
+```{r,include=FALSE}
+# location folder result
+match_dir<-'resultados/'
+# location folder theoretical spectrum 
+datafile_theo<-("theo/")
+# if the file is separated by ; use sep=';'otherwise use sep=FALSE
+sep=FALSE
+# location folder experimental spectrum 
+datafile_exp<-("experimental/")
+```
+# 2.Comparison between experimental and  theoretical data
+```{r,include=FALSE}
+# location folder theoretical spectrum 
+file_paths_theo<-fs::dir_ls(datafile_theo)
+file_paths_exp<-fs::dir_ls(datafile_exp)
+theor<-files_read(datafile_theo,sep =";")
+exper<-files_read(datafile_exp,sep =";")
+# function in python to sort folder theoretical spectrum and file experimental spectrum
+fun<-import('Comparison_fun_2')
+list_file<-fun$select_match(file_paths_exp,file_paths_theo)
+```
+```{r,include=FALSE}
+for (num_origen in seq_along(list_file)){
+  # location file theoretical and experimental spectrum
+  loc_file<-list_file[[num_origen]]
+  # location folder experimental spectrum 
+  theoretical<-read.csv(loc_file[1],sep =";")
+  experimental<-read.csv(loc_file[2],sep =";")
+  theo_list<-theoretical
+  name<-loc_file[3]
+  feature<-loc_file[4]
+  # energy column counting
+  energy_theo<-length(theoretical)
+  energy_exp<-length(experimental)
+  # match list
+  list_match<-list()
+  # list to plot spectrum
+  data_theo<-list()
+  data.match<-list()
+  # Create a result folder
+  result_dir<-paste(match_dir,feature,sep='') # paths dis folder
+  if (file.exists(result_dir)==FALSE){
+    dir.create(result_dir)
+  }
+  # name path keep .csv
+  if (energy_theo==2){
+    mult=FALSE
+    if (energy_exp==6){
+      # length experimental and theoretical data divide in 3 parts
+      # High
+      H<-experimental[c(5,6)]
+      # Medium
+      M<-experimental[c(3,4)]
+      # Low
+      L<-experimental[c(1,2)] 
+      # Names list path
+      # Experimental energy list
+      exp<-list(H,M,L)
+      mult_name<-list('H','M','L')
+      for (k in seq_along(exp)){
+        file_n<-paste(result_dir,'/',mult_name[k],'/',sep='')
+        if (file.exists(file_n)==FALSE){
+          dir.create(file_n)
+        }
+        file_n<-paste(result_dir,'/',mult_name[k],'/',name,sep='')
+        list_result<-spectra_comparison(exp[[k]],theoretical,mult)
+        list_match<-list_result[[1]]
+        tabla<-list_result[[1]]
+        write.csv(tabla, file = paste(file_n,'.csv'))
+        data_theo<-list_result[[2]]
+        data.match<-list_result[[3]]
+        # export format .PNG
+        name_png=paste(file_n,".png")
+        png(name_png)
+        plot(grafico(data_theo,data.match))
+        dev.off()
+      }
+    }else{
+      list_result<-spectra_comparison(experimental,theoretical,mult)
+      list_match<-list_result[[1]]
+      tabla<-list_result[[1]]
+      dir_table<-paste(result_dir,'/',name,sep='')
+      write.csv(tabla, file=paste(dir_table,'.csv',sep=''))
+      data_theo<-list_result[[2]]
+      data.match<-list_result[[3]]
+      # export format .PNG
+      png(paste(dir_table,'.png'))
+      plot(grafico(data_theo,data.match))
+      dev.off()
+    }
+  }else{
+    # 2.2 Comparison and export comparative image of experimental and theoretical for  Multiple energy
+    for( i in seq_along(theo_list)){
+      data.theo<-theo_list[[i]]  
+      list_result<-spectra_comparison(experimental,data.theo)
+      list_match[[i]]<-list_result[[1]]
+      tabla<-list_result[[1]]
+      write.csv(tabla, file = paste(result_dir[i],'.csv'))
+      data_theo[[i]]<-list_result[[2]]
+      data.match[[i]]<-list_result[[3]]
+      # export format .PNG
+      name_png=paste(file_dir[[i]],".png")
+      png(name_png)
+      plot(grafico(data_theo[[i]],data.match[[i]]))
+      dev.off()
+    }
+  }
+}
+```
+```{r}
+'Routine Finished'
+```
